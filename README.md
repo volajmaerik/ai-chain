@@ -25,6 +25,17 @@ curl -fsSL https://raw.githubusercontent.com/volajmaerik/ai-chain/main/install.s
 ai-chain [--mode review|compare|debate] [--ensemble [N]] [--file <path>] [--save] [--quiet] "your question"
 ```
 
+### Claude Code slash command
+
+If you use [Claude Code](https://docs.anthropic.com/claude-code), the installer also adds
+a `/ai-chain` slash command. Type `/ai-chain` with no arguments to see all available flags.
+
+```bash
+/ai-chain explain closures in JavaScript
+/ai-chain --ensemble what is a monad?
+/ai-chain --mode debate is Go better than Rust?
+```
+
 ### Basic
 
 ```bash
