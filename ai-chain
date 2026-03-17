@@ -2,8 +2,8 @@
 # ai-chain — Gemini drafts, Claude reviews
 # Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] "your prompt"
 
-MODEL_PRO="gemini-2.5-pro"
-MODEL_FLASH="gemini-2.5-flash"
+MODEL_PRO="gemini-3.1-pro-preview"
+MODEL_FLASH="gemini-3.1-flash-lite-preview"
 
 MODE="review"
 FILE_PATH=""
