@@ -80,21 +80,15 @@ Suppress the `━━━ ... ━━━` banners:
 ai-chain --quiet "what is TCP?"
 ```
 
-## Model selection
+## Model
 
-The script auto-selects the Gemini model:
-
-- **Flash** (`auto-gemini-3`) — short, simple lookups (≤ 8 words, simple pattern like "what is X")
-- **Pro** (`auto-gemini-3`) — everything else: long prompts, file input, piped stdin, `compare`/`debate` modes
+Uses `auto-gemini-3` — Google automatically routes each request to the best Gemini 3.1 model.
 
 ## Examples
 
 ```bash
-# Auto → Pro (complex question)
+# Basic question
 ai-chain "what is a monad in functional programming?"
-
-# Auto → Flash (short, simple)
-ai-chain "what is 2+2"
 
 # Pipe a file
 cat ~/.local/bin/ai-chain | ai-chain "explain this script"
