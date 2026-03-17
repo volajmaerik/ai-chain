@@ -1,37 +1,264 @@
 #!/bin/bash
 # ai-chain — Gemini drafts, Claude reviews
-# Usage: ai-chain "your prompt"
+# Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] "your prompt"
 
-PROMPT="$*"
+MODEL_PRO="gemini-2.5-pro"
+MODEL_FLASH="gemini-2.5-flash"
 
-if [ -z "$PROMPT" ]; then
-  echo "Usage: ai-chain <prompt>"
+MODE="review"
+FILE_PATH=""
+SAVE=false
+QUIET=false
+ARGS=()
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      MODE="$2"
+      shift 2
+      ;;
+    --file)
+      FILE_PATH="$2"
+      shift 2
+      ;;
+    --save)
+      SAVE=true
+      shift
+      ;;
+    --quiet)
+      QUIET=true
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+PROMPT="${ARGS[*]}"
+STDIN_DATA=""
+
+# Read stdin if piped (not a TTY)
+if ! [ -t 0 ]; then
+  STDIN_DATA=$(cat)
+  # If no prompt provided, use stdin as the prompt
+  if [ -z "$PROMPT" ]; then
+    PROMPT="$STDIN_DATA"
+    STDIN_DATA=""
+  fi
+fi
+
+# Read --file contents
+FILE_CONTENTS=""
+if [ -n "$FILE_PATH" ]; then
+  if [ ! -f "$FILE_PATH" ]; then
+    echo "Error: file not found: $FILE_PATH"
+    exit 1
+  fi
+  FILE_CONTENTS=$(cat "$FILE_PATH")
+fi
+
+if [ -z "$PROMPT" ] && [ -z "$FILE_CONTENTS" ]; then
+  echo "Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] <prompt>"
+  echo ""
+  echo "Modes:"
+  echo "  review   (default) Gemini answers, Claude reviews/corrects"
+  echo "  compare  Both answer independently, shown side by side"
+  echo "  debate   Gemini answers → Claude challenges → Gemini has final word"
+  echo ""
+  echo "Flags:"
+  echo "  --file <path>  Append file contents to prompt"
+  echo "  --save         Save output to ~/ai-chain-YYYY-MM-DD-HHMMSS.md"
+  echo "  --quiet        Suppress banners"
+  echo ""
+  echo "Pipe support:"
+  echo "  cat file.py | ai-chain \"explain this\""
+  echo "  echo \"what is X\" | ai-chain"
   exit 1
 fi
 
-echo ""
-echo "━━━ Gemini is thinking... ━━━"
-echo ""
+# Auto-select model based on prompt complexity
+select_model() {
+  local prompt="$1"
+  local word_count
+  word_count=$(echo "$prompt" | wc -w | tr -d ' ')
 
-GEMINI_RESPONSE=$(gemini -p "$PROMPT" 2>/dev/null)
-GEMINI_EXIT=$?
+  # Force Pro when: file/stdin provided, or complex modes
+  if [ -n "$FILE_PATH" ] || [ -n "$STDIN_DATA" ] || [ "$MODE" = "debate" ] || [ "$MODE" = "compare" ]; then
+    echo "$MODEL_PRO"
+    return
+  fi
 
-if [ $GEMINI_EXIT -ne 0 ]; then
-  echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
-  exit 1
-fi
+  # Use Flash for short simple prompts only
+  if [ "$word_count" -le 8 ]; then
+    local lower_prompt
+    lower_prompt=$(echo "$prompt" | tr '[:upper:]' '[:lower:]')
+    case "$lower_prompt" in
+      "what is "* | "who is "* | "when "* | "define "* | "how many "* | "how old "*)
+        echo "$MODEL_FLASH"
+        return
+        ;;
+    esac
+  fi
 
-echo "$GEMINI_RESPONSE"
-echo ""
-echo "━━━ Claude is reviewing... ━━━"
-echo ""
+  echo "$MODEL_PRO"
+}
 
-REVIEW_PROMPT="Original question:
-$PROMPT
+MODEL=$(select_model "$PROMPT")
+
+# Build the full prompt sent to Gemini/Claude
+build_full_prompt() {
+  local prompt="$1"
+  local result="$prompt"
+
+  if [ -n "$FILE_CONTENTS" ]; then
+    result="$prompt
+
+--- File: $FILE_PATH ---
+$FILE_CONTENTS"
+  fi
+
+  if [ -n "$STDIN_DATA" ]; then
+    result="$prompt
+
+--- Piped Input ---
+$STDIN_DATA"
+  fi
+
+  echo "$result"
+}
+
+FULL_PROMPT=$(build_full_prompt "$PROMPT")
+
+# Output collector (used by --save)
+OUTPUT=""
+
+emit() {
+  local text="$1"
+  printf '%s\n' "$text"
+  OUTPUT+="$text"$'\n'
+}
+
+banner() {
+  local label="$1"
+  if [ "$QUIET" = false ]; then
+    printf '\n━━━ %s ━━━\n\n' "$label"
+    OUTPUT+=$'\n'"━━━ $label ━━━"$'\n\n'
+  fi
+}
+
+run_gemini() {
+  local prompt="$1"
+  gemini -m "$MODEL" -p "$prompt" 2>/dev/null
+}
+
+run_claude() {
+  local prompt="$1"
+  claude -p "$prompt" 2>/dev/null
+}
+
+# ── COMPARE MODE ──────────────────────────────────────────────────────────────
+if [ "$MODE" = "compare" ]; then
+  banner "Gemini ($MODEL) answering..."
+
+  GEMINI_RESPONSE=$(run_gemini "$FULL_PROMPT")
+  GEMINI_EXIT=$?
+  if [ $GEMINI_EXIT -ne 0 ]; then
+    echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
+    exit 1
+  fi
+  emit "$GEMINI_RESPONSE"
+
+  banner "Claude answering independently..."
+
+  CLAUDE_RESPONSE=$(run_claude "Answer the following question on your own — do not reference any other AI's response:
+
+$FULL_PROMPT")
+  emit "$CLAUDE_RESPONSE"
+
+# ── DEBATE MODE ───────────────────────────────────────────────────────────────
+elif [ "$MODE" = "debate" ]; then
+  banner "Gemini ($MODEL) opening..."
+
+  GEMINI_RESPONSE=$(run_gemini "$FULL_PROMPT")
+  GEMINI_EXIT=$?
+  if [ $GEMINI_EXIT -ne 0 ]; then
+    echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
+    exit 1
+  fi
+  emit "$GEMINI_RESPONSE"
+
+  banner "Claude challenging..."
+
+  CHALLENGE_PROMPT="Gemini was asked: $FULL_PROMPT
+
+Gemini's answer:
+$GEMINI_RESPONSE
+
+Challenge this answer. Find weaknesses, missing nuance, or counterarguments. Be direct and push back where you disagree. Don't simply confirm it."
+
+  CLAUDE_CHALLENGE=$(run_claude "$CHALLENGE_PROMPT")
+  emit "$CLAUDE_CHALLENGE"
+
+  banner "Gemini has the final word..."
+
+  FINAL_PROMPT="You previously answered this question: $FULL_PROMPT
+
+Your answer was:
+$GEMINI_RESPONSE
+
+Claude challenged it with:
+$CLAUDE_CHALLENGE
+
+Respond to the challenge. Defend valid points, concede where Claude is right, and give your final refined answer."
+
+  FINAL_RESPONSE=$(run_gemini "$FINAL_PROMPT")
+  FINAL_EXIT=$?
+  if [ $FINAL_EXIT -ne 0 ]; then
+    echo "Error: gemini failed on final word (exit $FINAL_EXIT)."
+    exit 1
+  fi
+  emit "$FINAL_RESPONSE"
+
+# ── REVIEW MODE (default) ─────────────────────────────────────────────────────
+else
+  banner "Gemini ($MODEL) is thinking..."
+
+  GEMINI_RESPONSE=$(run_gemini "$FULL_PROMPT")
+  GEMINI_EXIT=$?
+  if [ $GEMINI_EXIT -ne 0 ]; then
+    echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
+    exit 1
+  fi
+  emit "$GEMINI_RESPONSE"
+
+  banner "Claude is reviewing..."
+
+  REVIEW_PROMPT="Original question:
+$FULL_PROMPT
 
 Gemini's answer:
 $GEMINI_RESPONSE
 
 Please review Gemini's answer above. If it's correct and complete, confirm it briefly and add anything useful. If there are errors, gaps, or improvements — fix them and explain what changed. Be concise."
 
-claude -p "$REVIEW_PROMPT"
+  CLAUDE_RESPONSE=$(run_claude "$REVIEW_PROMPT")
+  emit "$CLAUDE_RESPONSE"
+fi
+
+# ── SAVE ──────────────────────────────────────────────────────────────────────
+if [ "$SAVE" = true ]; then
+  TIMESTAMP=$(date +%Y-%m-%d-%H%M%S)
+  SAVE_FILE="$HOME/ai-chain-$TIMESTAMP.md"
+  {
+    echo "# ai-chain: $PROMPT"
+    echo ""
+    echo "_Generated: $(date) | Model: $MODEL | Mode: $MODE_"
+    echo ""
+    echo "$OUTPUT"
+  } > "$SAVE_FILE"
+  echo ""
+  echo "Saved to: $SAVE_FILE"
+fi
