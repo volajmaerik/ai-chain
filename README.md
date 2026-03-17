@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/volajmaerik/ai-chain/main/install.s
 ## Usage
 
 ```bash
-ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] "your question"
+ai-chain [--mode review|compare|debate] [--ensemble [N]] [--file <path>] [--save] [--quiet] "your question"
 ```
 
 ### Basic
@@ -45,6 +45,29 @@ Gemini answers first, then Claude reviews, confirms, or corrects it.
 ai-chain --mode compare "is TypeScript worth learning?"
 ai-chain --mode debate "is Go better than Rust?"
 ```
+
+### Ensemble mode
+
+Run N Gemini calls in parallel, each approaching the question from a different angle, then Claude synthesizes all perspectives into one authoritative answer.
+
+```bash
+ai-chain --ensemble "what is a monad in functional programming?"    # 3 perspectives (default)
+ai-chain --ensemble 5 "is Rust worth learning?"                     # 5 perspectives
+ai-chain --ensemble --file main.go "review this code"               # with file input
+ai-chain --ensemble --save "what is eventual consistency?"          # save output
+```
+
+N defaults to 3, max is 5. Only works in `review` mode — combining with `--mode debate` or `--mode compare` prints a warning and falls back to single Gemini.
+
+The 5 lenses used (N controls how many are active, always starting from 1):
+
+| # | Lens | Approach |
+|---|------|----------|
+| 1 | Direct | Precise and technically accurate |
+| 2 | Reasoning | Step-by-step reasoning process |
+| 3 | Critical | Edge cases and common misconceptions |
+| 4 | Practical | Concrete examples |
+| 5 | Expert | Deep domain expertise, precise terminology |
 
 ### File input
 
@@ -104,4 +127,10 @@ ai-chain --mode debate "is Go better than Rust?"
 
 # Save output
 ai-chain --save "explain closures in JS"
+
+# Ensemble: 3 parallel perspectives, Claude synthesizes
+ai-chain --ensemble "explain async/await in JavaScript"
+
+# Ensemble with 5 perspectives
+ai-chain --ensemble 5 "explain async/await in JavaScript"
 ```

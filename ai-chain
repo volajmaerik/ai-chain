@@ -1,6 +1,6 @@
 #!/bin/bash
 # ai-chain — Gemini drafts, Claude reviews
-# Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] "your prompt"
+# Usage: ai-chain [--mode review|compare|debate] [--ensemble [N]] [--file <path>] [--save] [--quiet] "your prompt"
 
 MODEL="auto-gemini-3"
 
@@ -8,6 +8,8 @@ MODE="review"
 FILE_PATH=""
 SAVE=false
 QUIET=false
+ENSEMBLE=false
+ENSEMBLE_N=3
 ARGS=()
 
 # Parse flags
@@ -16,6 +18,16 @@ while [[ $# -gt 0 ]]; do
     --mode)
       MODE="$2"
       shift 2
+      ;;
+    --ensemble)
+      ENSEMBLE=true
+      # Check if next arg is a digit 1-5
+      if [[ "$2" =~ ^[1-5]$ ]]; then
+        ENSEMBLE_N="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     --file)
       FILE_PATH="$2"
@@ -60,7 +72,7 @@ if [ -n "$FILE_PATH" ]; then
 fi
 
 if [ -z "$PROMPT" ] && [ -z "$FILE_CONTENTS" ]; then
-  echo "Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] <prompt>"
+  echo "Usage: ai-chain [--mode review|compare|debate] [--ensemble [N]] [--file <path>] [--save] [--quiet] <prompt>"
   echo ""
   echo "Modes:"
   echo "  review   (default) Gemini answers, Claude reviews/corrects"
@@ -68,9 +80,10 @@ if [ -z "$PROMPT" ] && [ -z "$FILE_CONTENTS" ]; then
   echo "  debate   Gemini answers → Claude challenges → Gemini has final word"
   echo ""
   echo "Flags:"
-  echo "  --file <path>  Append file contents to prompt"
-  echo "  --save         Save output to ~/ai-chain-YYYY-MM-DD-HHMMSS.md"
-  echo "  --quiet        Suppress banners"
+  echo "  --ensemble [N]  Run N parallel Gemini perspectives (default 3, max 5), Claude synthesizes"
+  echo "  --file <path>   Append file contents to prompt"
+  echo "  --save          Save output to ~/ai-chain-YYYY-MM-DD-HHMMSS.md"
+  echo "  --quiet         Suppress banners"
   echo ""
   echo "Pipe support:"
   echo "  cat file.py | ai-chain \"explain this\""
@@ -128,6 +141,12 @@ run_claude() {
   local prompt="$1"
   claude -p "$prompt" 2>/dev/null
 }
+
+# Warn if --ensemble is used with a non-review mode
+if [ "$ENSEMBLE" = true ] && [ "$MODE" != "review" ]; then
+  echo "Warning: --ensemble is only supported in review mode. Falling back to single Gemini."
+  ENSEMBLE=false
+fi
 
 # ── COMPARE MODE ──────────────────────────────────────────────────────────────
 if [ "$MODE" = "compare" ]; then
@@ -194,19 +213,74 @@ Respond to the challenge. Defend valid points, concede where Claude is right, an
 
 # ── REVIEW MODE (default) ─────────────────────────────────────────────────────
 else
-  banner "Gemini ($MODEL) is thinking..."
+  # Ensemble mode: warn if combined with non-review modes (handled above),
+  # run N parallel Gemini perspectives, Claude synthesizes.
+  if [ "$ENSEMBLE" = true ]; then
+    # Warn if somehow ensemble reached a non-review path (safety net)
+    banner "Ensemble: $ENSEMBLE_N perspectives running in parallel..."
 
-  GEMINI_RESPONSE=$(run_gemini "$FULL_PROMPT")
-  GEMINI_EXIT=$?
-  if [ $GEMINI_EXIT -ne 0 ]; then
-    echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
-    exit 1
-  fi
-  emit "$GEMINI_RESPONSE"
+    LENS_1="Answer directly and technically. Be precise and accurate."
+    LENS_2="Think step by step, showing your reasoning process as you go."
+    LENS_3="Identify potential issues, edge cases, or common misconceptions about this topic."
+    LENS_4="Give a practical, example-driven answer. Use concrete examples wherever possible."
+    LENS_5="Answer as a deep domain expert. Assume the reader is also technical and use precise terminology."
 
-  banner "Claude is reviewing..."
+    LENS_LABEL_1="Direct"
+    LENS_LABEL_2="Reasoning"
+    LENS_LABEL_3="Critical"
+    LENS_LABEL_4="Practical"
+    LENS_LABEL_5="Expert"
 
-  REVIEW_PROMPT="Original question:
+    ENSEMBLE_TMP=$(mktemp -d)
+
+    # Fire N parallel Gemini calls
+    for i in $(seq 1 "$ENSEMBLE_N"); do
+      eval "LENS=\$LENS_$i"
+      gemini -m "$MODEL" -p "$FULL_PROMPT
+
+$LENS" > "$ENSEMBLE_TMP/$i.txt" 2>/dev/null &
+    done
+    wait
+
+    # Build synthesis prompt
+    SYNTHESIS_PROMPT="You have received $ENSEMBLE_N independent responses to the same question, each approached from a different angle. Synthesize the best possible answer — combine accurate information, resolve contradictions, discard errors, fill gaps. Do not mention the individual perspectives.
+
+Question: $FULL_PROMPT
+"
+
+    for i in $(seq 1 "$ENSEMBLE_N"); do
+      eval "LABEL=\$LENS_LABEL_$i"
+      PERSPECTIVE=$(cat "$ENSEMBLE_TMP/$i.txt")
+      SYNTHESIS_PROMPT="$SYNTHESIS_PROMPT
+[Perspective $i — $LABEL]:
+$PERSPECTIVE
+"
+    done
+
+    SYNTHESIS_PROMPT="$SYNTHESIS_PROMPT
+Synthesize these into one authoritative, concise answer."
+
+    rm -rf "$ENSEMBLE_TMP"
+
+    banner "Claude synthesizing $ENSEMBLE_N perspectives..."
+
+    CLAUDE_RESPONSE=$(run_claude "$SYNTHESIS_PROMPT")
+    emit "$CLAUDE_RESPONSE"
+
+  else
+    banner "Gemini ($MODEL) is thinking..."
+
+    GEMINI_RESPONSE=$(run_gemini "$FULL_PROMPT")
+    GEMINI_EXIT=$?
+    if [ $GEMINI_EXIT -ne 0 ]; then
+      echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
+      exit 1
+    fi
+    emit "$GEMINI_RESPONSE"
+
+    banner "Claude is reviewing..."
+
+    REVIEW_PROMPT="Original question:
 $FULL_PROMPT
 
 Gemini's answer:
@@ -214,8 +288,9 @@ $GEMINI_RESPONSE
 
 Please review Gemini's answer above. If it's correct and complete, confirm it briefly and add anything useful. If there are errors, gaps, or improvements — fix them and explain what changed. Be concise."
 
-  CLAUDE_RESPONSE=$(run_claude "$REVIEW_PROMPT")
-  emit "$CLAUDE_RESPONSE"
+    CLAUDE_RESPONSE=$(run_claude "$REVIEW_PROMPT")
+    emit "$CLAUDE_RESPONSE"
+  fi
 fi
 
 # ── SAVE ──────────────────────────────────────────────────────────────────────
