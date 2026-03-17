@@ -1,0 +1,37 @@
+#!/bin/bash
+# ai-chain — Gemini drafts, Claude reviews
+# Usage: ai-chain "your prompt"
+
+PROMPT="$*"
+
+if [ -z "$PROMPT" ]; then
+  echo "Usage: ai-chain <prompt>"
+  exit 1
+fi
+
+echo ""
+echo "━━━ Gemini is thinking... ━━━"
+echo ""
+
+GEMINI_RESPONSE=$(gemini -p "$PROMPT" 2>/dev/null)
+GEMINI_EXIT=$?
+
+if [ $GEMINI_EXIT -ne 0 ]; then
+  echo "Error: gemini failed (exit $GEMINI_EXIT). Run 'gemini' interactively to authenticate first."
+  exit 1
+fi
+
+echo "$GEMINI_RESPONSE"
+echo ""
+echo "━━━ Claude is reviewing... ━━━"
+echo ""
+
+REVIEW_PROMPT="Original question:
+$PROMPT
+
+Gemini's answer:
+$GEMINI_RESPONSE
+
+Please review Gemini's answer above. If it's correct and complete, confirm it briefly and add anything useful. If there are errors, gaps, or improvements — fix them and explain what changed. Be concise."
+
+claude -p "$REVIEW_PROMPT"
