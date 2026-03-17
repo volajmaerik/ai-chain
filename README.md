@@ -84,8 +84,8 @@ ai-chain --quiet "what is TCP?"
 
 The script auto-selects the Gemini model:
 
-- **Flash** (`gemini-3.1-flash-lite-preview`) — short, simple lookups (≤ 8 words, simple pattern like "what is X")
-- **Pro** (`gemini-3.1-pro-preview`) — everything else: long prompts, file input, piped stdin, `compare`/`debate` modes
+- **Flash** (`auto-gemini-3`) — short, simple lookups (≤ 8 words, simple pattern like "what is X")
+- **Pro** (`auto-gemini-3`) — everything else: long prompts, file input, piped stdin, `compare`/`debate` modes
 
 ## Examples
 

@@ -2,8 +2,7 @@
 # ai-chain — Gemini drafts, Claude reviews
 # Usage: ai-chain [--mode review|compare|debate] [--file <path>] [--save] [--quiet] "your prompt"
 
-MODEL_PRO="gemini-3.1-pro-preview"
-MODEL_FLASH="gemini-3.1-flash-lite-preview"
+MODEL="auto-gemini-3"
 
 MODE="review"
 FILE_PATH=""
@@ -78,35 +77,6 @@ if [ -z "$PROMPT" ] && [ -z "$FILE_CONTENTS" ]; then
   echo "  echo \"what is X\" | ai-chain"
   exit 1
 fi
-
-# Auto-select model based on prompt complexity
-select_model() {
-  local prompt="$1"
-  local word_count
-  word_count=$(echo "$prompt" | wc -w | tr -d ' ')
-
-  # Force Pro when: file/stdin provided, or complex modes
-  if [ -n "$FILE_PATH" ] || [ -n "$STDIN_DATA" ] || [ "$MODE" = "debate" ] || [ "$MODE" = "compare" ]; then
-    echo "$MODEL_PRO"
-    return
-  fi
-
-  # Use Flash for short simple prompts only
-  if [ "$word_count" -le 8 ]; then
-    local lower_prompt
-    lower_prompt=$(echo "$prompt" | tr '[:upper:]' '[:lower:]')
-    case "$lower_prompt" in
-      "what is "* | "who is "* | "when "* | "define "* | "how many "* | "how old "*)
-        echo "$MODEL_FLASH"
-        return
-        ;;
-    esac
-  fi
-
-  echo "$MODEL_PRO"
-}
-
-MODEL=$(select_model "$PROMPT")
 
 # Build the full prompt sent to Gemini/Claude
 build_full_prompt() {
