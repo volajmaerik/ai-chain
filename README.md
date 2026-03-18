@@ -114,6 +114,33 @@ Suppress the `━━━ ... ━━━` banners:
 ai-chain --quiet "what is TCP?"
 ```
 
+## cy-chain — Cypress AI debug & review
+
+Pipes Cypress test questions through **Gemini → Claude** for debugging and explanation.
+
+```bash
+# Explain a test file
+cy-chain --file cypress/e2e/campaigns/CampaignBudgeting.cy.js
+
+# Debug a failure (pipe error output)
+cat cypress-run-output.log | cy-chain --mode debug --file test.cy.js
+
+# Ask a Cypress question inline
+cy-chain "how do I test a drawer that opens on button click using data-id selectors?"
+
+# Save the session
+cy-chain --save --file test.cy.js "explain this"
+```
+
+| Flag | Description |
+|------|-------------|
+| `--mode debug` | Diagnose a failing test |
+| `--file <path>` | Include a test file in the prompt |
+| `--save` | Save output to `~/cy-chain-YYYY-MM-DD-HHMMSS.md` |
+| `--quiet` | Suppress banners |
+
+---
+
 ## Model
 
 Uses `auto-gemini-3` — Google automatically routes each request to the best Gemini 3.1 model.

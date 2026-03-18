@@ -1,0 +1,140 @@
+#!/bin/bash
+# cy-chain — Cypress AI debug & review agent (Gemini drafts, Claude reviews)
+# Usage: cy-chain [--mode review|debug] [--file <path>] [--save] [--quiet] "your question"
+
+set -e
+
+MODE="review"
+FILE=""
+STDIN_CONTENT=""
+SAVE=false
+QUIET=false
+PROMPT_ARGS=()
+
+# ── Flag parsing ──────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)   MODE="$2"; shift 2 ;;
+    --file)   FILE="$2";  shift 2 ;;
+    --save)   SAVE=true;  shift ;;
+    --quiet)  QUIET=true; shift ;;
+    *)        PROMPT_ARGS+=("$1"); shift ;;
+  esac
+done
+
+USER_PROMPT="${PROMPT_ARGS[*]}"
+
+# ── Read piped stdin ──────────────────────────────────────────
+if [[ ! -t 0 ]]; then
+  STDIN_CONTENT=$(cat)
+fi
+
+# ── Read --file ───────────────────────────────────────────────
+FILE_CONTENT=""
+if [[ -n "$FILE" ]]; then
+  [[ -f "$FILE" ]] || { echo "Error: file not found: $FILE" >&2; exit 1; }
+  FILE_CONTENT=$(cat "$FILE")
+fi
+
+# ── Require some input ────────────────────────────────────────
+if [[ -z "$USER_PROMPT" && -z "$FILE_CONTENT" && -z "$STDIN_CONTENT" ]]; then
+  echo "Usage: cy-chain [--mode review|debug] [--file <path>] [--save] [--quiet] \"your question\""
+  echo ""
+  echo "Modes:"
+  echo "  review  (default) Explain or answer a Cypress question"
+  echo "  debug   Diagnose a failing test and propose a fix"
+  echo ""
+  echo "Flags:"
+  echo "  --file <path>   Include a test file's content in the prompt"
+  echo "  --save          Save output to ~/cy-chain-YYYY-MM-DD-HHMMSS.md"
+  echo "  --quiet         Suppress ━━━ banners"
+  echo ""
+  echo "Examples:"
+  echo "  cy-chain --file cypress/e2e/campaigns/CampaignBudgeting.cy.js"
+  echo "  cy-chain --mode debug --file test.cy.js \"timed out waiting for element\""
+  echo "  cat error.log | cy-chain --mode debug --file test.cy.js"
+  echo "  cy-chain --save --file test.cy.js \"explain this\""
+  exit 1
+fi
+
+# ── Cypress project context (always injected) ─────────────────
+CYPRESS_CONTEXT="You are helping with Cypress E2E tests for Trendin, an influencer marketing SaaS.
+Key conventions:
+- Selectors use data-id=\"module_Component_Sub\" and data-detail-id attributes
+- Custom commands live in cypress/support/commands.js and feature command files
+- cy.login(), cy.loadAndGetFixtures(), cy.intercept() are common patterns
+- TIMEOUTS / DELAYS constants from campaign_constants.js replace magic numbers
+- Tests are in JavaScript (.cy.js), Cypress v15"
+
+# ── Build the full prompt ─────────────────────────────────────
+build_prompt() {
+  echo "$CYPRESS_CONTEXT"
+  echo ""
+  if [[ -n "$FILE_CONTENT" ]]; then
+    echo "=== Test file: ${FILE} ==="
+    echo "$FILE_CONTENT"
+    echo "=========================="
+    echo ""
+  fi
+  if [[ -n "$STDIN_CONTENT" ]]; then
+    echo "=== Error / additional input ==="
+    echo "$STDIN_CONTENT"
+    echo "================================"
+    echo ""
+  fi
+  case "$MODE" in
+    debug)
+      echo "This test is failing. Diagnose the root cause and propose a specific fix."
+      [[ -n "$USER_PROMPT" ]] && echo "$USER_PROMPT"
+      ;;
+    *)
+      if [[ -n "$USER_PROMPT" ]]; then
+        echo "$USER_PROMPT"
+      else
+        echo "Explain what this test file does in plain English."
+      fi
+      ;;
+  esac
+}
+
+FULL_PROMPT=$(build_prompt)
+
+# ── Banners ───────────────────────────────────────────────────
+banner() { [[ "$QUIET" == true ]] || printf '\n━━━ %s ━━━\n\n' "$1"; }
+
+# ── Run Gemini ────────────────────────────────────────────────
+banner "Gemini"
+GEMINI_OUT=$(gemini -m auto-gemini-3 -p "$FULL_PROMPT" 2>/dev/null)
+echo "$GEMINI_OUT"
+
+# ── Run Claude review ─────────────────────────────────────────
+CLAUDE_PROMPT="$CYPRESS_CONTEXT
+
+Gemini's response:
+$GEMINI_OUT
+
+Review the above. If it's correct and complete, confirm briefly and add anything useful. If there are errors or improvements — fix them and explain what changed. Be concise."
+
+banner "Claude"
+CLAUDE_OUT=$(claude -m claude-sonnet-4-6 -p "$CLAUDE_PROMPT" 2>/dev/null)
+echo "$CLAUDE_OUT"
+
+# ── Save ──────────────────────────────────────────────────────
+if [[ "$SAVE" == true ]]; then
+  OUTFILE=~/cy-chain-$(date +%Y-%m-%d-%H%M%S).md
+  {
+    echo "# cy-chain: $MODE"
+    echo ""
+    echo "**File:** ${FILE:-stdin}"
+    echo "**Mode:** $MODE"
+    echo "**Generated:** $(date)"
+    echo ""
+    echo "## Gemini"
+    echo "$GEMINI_OUT"
+    echo ""
+    echo "## Claude"
+    echo "$CLAUDE_OUT"
+  } > "$OUTFILE"
+  echo ""
+  echo "Saved to $OUTFILE"
+fi
