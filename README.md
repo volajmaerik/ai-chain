@@ -15,8 +15,20 @@ Supports three modes, file input, stdin piping, and saving output.
 
 ## Install
 
+Install everything:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/volajmaerik/ai-chain/main/install.sh | bash
+```
+
+Or install individually:
+
+```bash
+# ai-chain only
+curl -fsSL https://raw.githubusercontent.com/volajmaerik/ai-chain/main/install-ai-chain.sh | bash
+
+# cy-chain only
+curl -fsSL https://raw.githubusercontent.com/volajmaerik/ai-chain/main/install-cy-chain.sh | bash
 ```
 
 ## Usage
